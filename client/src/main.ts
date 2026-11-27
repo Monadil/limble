@@ -1,5 +1,5 @@
 import {
-  FINISH_X, LIMBS, LimbleSim, START_X, TICK, armsFromPairStick, legsFromPairStick,
+  FINISH_X, ITEMS, LIMBS, LimbleSim, PairLegsGait, START_X, TICK, armsFromPairStick,
 } from "@limble/shared";
 import { loadSavedConfig, mountDebugPanel } from "./debug";
 import { Joysticks } from "./joysticks";
@@ -32,6 +32,7 @@ const hud = {
   fill: $("progress-fill"),
   bestMark: $("progress-best"),
   banner: $("banner"),
+  items: $("items"),
 };
 let lastBanner = "";
 
@@ -39,17 +40,22 @@ function updateHud() {
   const s = sim.snapshot();
   const total = FINISH_X - START_X;
   hud.attempt.textContent = `Attempt ${s.attempt}`;
-  hud.best.textContent = `Best ${s.best.toFixed(1)} m` + (s.bestTime ? ` · ${s.bestTime.toFixed(1)}s` : "");
+  hud.best.textContent = s.bestItems
+    ? `Best: ${s.bestItems}/${ITEMS.length} items · ${s.bestTime?.toFixed(1)}s`
+    : `Best ${s.best.toFixed(1)} m`;
+  hud.items.innerHTML = ITEMS.map((it, i) =>
+    `<span style="background:${i < s.itemsLeft ? it.color : "transparent"}"></span>`).join("");
   hud.time.textContent = `${s.time.toFixed(1)}s`;
   hud.fill.style.width = `${(s.distance / total) * 100}%`;
   hud.bestMark.style.left = `calc(${(s.best / total) * 100}% - 1.5px)`;
 
   let banner = "";
   if (s.status === "failed") {
-    banner = s.failReason === "dropped" ? "DROPPED IT!" : "FELL OVER!";
+    banner = s.failReason === "dropped" ? "DROPPED EVERYTHING!" : "FELL OVER!";
     banner += `<small>${s.distance.toFixed(1)} m</small>`;
   } else if (s.status === "finished") {
-    banner = `DELIVERED!<small>${s.time.toFixed(1)} s</small>`;
+    const perfect = s.itemsLeft === ITEMS.length;
+    banner = `${perfect ? "PERFECT!" : "DELIVERED!"}<small>${s.itemsLeft}/${ITEMS.length} items · ${s.time.toFixed(1)} s</small>`;
   }
   if (banner !== lastBanner) {
     hud.banner.innerHTML = banner || hud.banner.innerHTML;
@@ -59,6 +65,8 @@ function updateHud() {
   return s;
 }
 
+const gait = new PairLegsGait();
+let gaitAttempt = sim.attempt;
 let last = performance.now();
 let acc = 0;
 function frame(now: number) {
@@ -66,11 +74,17 @@ function frame(now: number) {
   last = now;
   acc += dt;
 
-  // Solo: left thumb = both legs, right thumb = both arms.
-  sim.setInputs({ ...legsFromPairStick(sticks.read("left")), ...armsFromPairStick(sticks.read("right")) });
+  // Solo: left thumb = both legs (swipe to step), right thumb = both arms.
+  const legStick = sticks.read("left");
+  const armStick = sticks.read("right");
 
   let steps = 0;
   while (acc >= TICK && steps < 6) {
+    if (sim.attempt !== gaitAttempt) {
+      gait.reset();
+      gaitAttempt = sim.attempt;
+    }
+    sim.setInputs({ ...gait.update(legStick, TICK), ...armsFromPairStick(armStick) });
     sim.step();
     acc -= TICK;
     steps++;

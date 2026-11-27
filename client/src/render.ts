@@ -1,6 +1,6 @@
 import {
   ARM_W, FINISH_X, FOOT_FORWARD, FOOT_H, FOOT_W, FOREARM, GROUND, HEAD_R, HEAD_Y, ITEMS, LEG_W,
-  LIMB_COLORS, PART_IDS, SHIN, START_X, THIGH, TORSO_H, TORSO_W, TRAY_H, TRAY_W, UPPER_ARM,
+  LIMB_COLORS, PART_IDS, SHIN, START_X, THIGH, TORSO_H, TORSO_W, TRAY_H, TRAY_RIM_H, TRAY_RIM_W, TRAY_W, UPPER_ARM,
   groundHeightAt, type LimbId, type PartId, type Snapshot,
 } from "@limble/shared";
 import type { Joysticks } from "./joysticks";
@@ -243,6 +243,9 @@ export class Renderer {
       c.fillStyle = "#c9ced6";
       c.beginPath();
       c.roundRect(-TRAY_W / 2, -TRAY_H / 2, TRAY_W, TRAY_H, 0.015);
+      for (const side of [-1, 1]) {
+        c.roundRect(side * (TRAY_W / 2 - TRAY_RIM_W / 2) - TRAY_RIM_W / 2, TRAY_H / 2 - 0.01, TRAY_RIM_W, TRAY_RIM_H + 0.01, 0.012);
+      }
       c.fill();
     });
     ITEMS.forEach((def, i) => {

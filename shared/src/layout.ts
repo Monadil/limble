@@ -50,6 +50,8 @@ export const REAR_ARM: LimbId = "rightArm";
 
 export const TRAY_W = 0.62;
 export const TRAY_H = 0.04;
+export const TRAY_RIM_W = 0.03;
+export const TRAY_RIM_H = 0.1;
 
 export interface ItemDef {
   w: number;
@@ -57,10 +59,10 @@ export interface ItemDef {
   color: string;
 }
 export const ITEMS: ItemDef[] = [
-  { w: 0.34, h: 0.11, color: "#f7c59f" },
-  { w: 0.29, h: 0.11, color: "#8ecae6" },
-  { w: 0.25, h: 0.1, color: "#ffd166" },
-  { w: 0.2, h: 0.1, color: "#ef8fb1" },
+  { w: 0.4, h: 0.075, color: "#f7c59f" },
+  { w: 0.36, h: 0.07, color: "#8ecae6" },
+  { w: 0.32, h: 0.07, color: "#ffd166" },
+  { w: 0.27, h: 0.065, color: "#ef8fb1" },
 ];
 
 // Course: flat start → ramp up → plateau → step down → finish.

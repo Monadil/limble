@@ -1,6 +1,6 @@
 import { CONFIG_RANGES, DEFAULT_CONFIG, type Config, type LimbleSim } from "@limble/shared";
 
-const STORAGE_KEY = "limble.config";
+const STORAGE_KEY = "limble.config.v2"; // bump when defaults change a lot, so old saved tuning is dropped
 
 export function loadSavedConfig(): Partial<Config> {
   try {

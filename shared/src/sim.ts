@@ -4,8 +4,8 @@ import { DEFAULT_CONFIG, type Config } from "./config";
 import { emptyInputs, type LimbInputs, type Stick } from "./controls";
 import {
   ARM_W, FINISH_X, FOOT_FORWARD, FOOT_H, FOOT_W, FOREARM, FRONT_ARM, FRONT_HAND, GROUND,
-  HEAD_R, HEAD_Y, HIP_LOCAL, ITEMS, LEG_REST, LEG_W, LIMBS, REAR_HAND, SHIN, SHOULDER_LOCAL,
-  START_X, THIGH, TORSO_H, TORSO_W, TRAY_H, TRAY_W, UPPER_ARM, groundHeightAt,
+  HEAD_R, HEAD_Y, HIP_LOCAL, ITEMS, LEG_REST, LEG_W, LIMBS, REAR_ARM, REAR_HAND, SHIN, SHOULDER_LOCAL,
+  START_X, THIGH, TORSO_H, TORSO_W, TRAY_H, TRAY_RIM_H, TRAY_RIM_W, TRAY_W, UPPER_ARM, groundHeightAt,
   type LimbId,
 } from "./layout";
 
@@ -28,6 +28,10 @@ export interface Snapshot {
   time: number;
   /** Fastest finish time so far (s), or null. */
   bestTime: number | null;
+  /** Items still off the floor this run. */
+  itemsLeft: number;
+  /** Most items delivered across finished runs. */
+  bestItems: number;
   limp: LimbId[];
 }
 
@@ -47,6 +51,8 @@ interface Limb {
 }
 
 const BODY_GROUP = -1; // body parts + tray never collide with each other
+const CAT_BODY = 0x0002; // limbs, torso, head (the tray keeps the default category)
+const ARM_ANCHOR_RISE = SHOULDER_LOCAL.y - HIP_LOCAL.y; // shoulder height above the hip when upright
 const LEG_STANCE: Record<string, number> = { leftLeg: 0.07, rightLeg: -0.07 };
 const FAIL_PAUSE = 2;
 const FINISH_PAUSE = 3;
@@ -81,6 +87,7 @@ export function solveIK(
 export class LimbleSim {
   config: Config;
   inputs: LimbInputs = emptyInputs();
+  private smoothed: LimbInputs = emptyInputs();
 
   status: Status = "playing";
   failReason: FailReason = null;
@@ -89,7 +96,10 @@ export class LimbleSim {
   bestTime: number | null = null;
   distance = 0;
   time = 0;
+  bestItems = 0;
 
+  private dropped = new Set<number>();
+  private itemIndex = new Map<Fixture, number>();
   private limp = new Set<LimbId>();
   private timer = 0;
   private world!: World;
@@ -128,6 +138,7 @@ export class LimbleSim {
   /** Re-apply config values that live on physics objects (call after editing config). */
   applyConfig() {
     this.world.setGravity({ x: 0, y: -this.config.gravity });
+    this.torso.setAngularDamping(this.config.torsoDamping);
     for (const f of this.feet) f.setFriction(this.config.footFriction);
     for (const f of this.itemFixtures) f.setFriction(this.config.itemFriction);
     for (let c = this.world.getContactList(); c; c = c.getNext()) c.resetFriction();
@@ -142,10 +153,14 @@ export class LimbleSim {
     if (this.status === "playing") {
       this.driveLimbs();
       this.selfRight();
+      this.steadyTray();
       this.time += TICK;
     } else {
       this.timer -= TICK;
-      if (this.status === "finished") this.driveLimbs();
+      if (this.status === "finished") {
+        this.driveLimbs();
+        this.steadyTray();
+      }
       if (this.timer <= 0) {
         this.restart();
         return;
@@ -161,12 +176,17 @@ export class LimbleSim {
     this.best = Math.max(this.best, this.distance);
 
     if (Math.abs(wrap(this.torso.getAngle())) > FALL_ANGLE) this.pendingFail ??= "fell";
+    if (this.dropped.size >= ITEMS.length) this.pendingFail ??= "dropped";
     if (this.pendingFail) {
       this.fail(this.pendingFail);
     } else if (x >= FINISH_X) {
       this.status = "finished";
       this.timer = FINISH_PAUSE;
-      this.bestTime = this.bestTime === null ? this.time : Math.min(this.bestTime, this.time);
+      const left = ITEMS.length - this.dropped.size;
+      if (left > this.bestItems || (left === this.bestItems && (this.bestTime === null || this.time < this.bestTime))) {
+        this.bestTime = this.time;
+      }
+      this.bestItems = Math.max(this.bestItems, left);
     }
   }
 
@@ -185,6 +205,8 @@ export class LimbleSim {
       distance: this.distance,
       time: this.time,
       bestTime: this.bestTime,
+      itemsLeft: ITEMS.length - this.dropped.size,
+      bestItems: this.bestItems,
       limp: [...this.limp],
     };
   }
@@ -231,17 +253,46 @@ export class LimbleSim {
     const torsoAngle = this.torso.getAngle();
     const hip = this.torso.getWorldPoint(HIP_LOCAL);
     const shoulder = this.torso.getWorldPoint(SHOULDER_LOCAL);
-    const s = this.status === "finished" ? emptyInputs() : this.inputs;
+    const wanted = this.status === "finished" ? emptyInputs() : this.inputs;
+    // Feet and hands chase the stick at a limited speed, so a flick doesn't whip the whole body.
+    const maxMove = this.config.limbSpeed * TICK;
     for (const id of LIMBS) {
       if (this.limp.has(id)) continue;
+      const cur = this.smoothed[id];
+      const dx = wanted[id].x - cur.x;
+      const dy = wanted[id].y - cur.y;
+      const d = Math.hypot(dx, dy);
+      const k = d > maxMove ? maxMove / d : 1;
+      cur.x += dx * k;
+      cur.y += dy * k;
+
       const limb = this.limbs[id];
-      const origin = limb.kind === "leg" ? hip : shoulder;
-      const t = this.targetFor(limb, s[id], origin);
-      const { a1, a2 } = solveIK(origin.x, origin.y, t.x, t.y, limb.L1, limb.L2, limb.bend);
-      const strength = limb.kind === "leg" ? this.config.legStrength : this.config.armStrength;
-      this.drive(limb.upperJoint, a1 - torsoAngle, strength);
-      this.drive(limb.lowerJoint, a2 - limb.upper.getAngle(), strength);
+      if (limb.kind === "leg") {
+        // Legs are posed relative to the torso (a pure joint-angle pose). Aiming feet in world space
+        // made planted feet shove the hip around, which set up a constant sway.
+        const t = this.targetFor(limb, cur, HIP_LOCAL);
+        const { a1, a2 } = solveIK(HIP_LOCAL.x, HIP_LOCAL.y, t.x, t.y, limb.L1, limb.L2, limb.bend);
+        this.drive(limb.upperJoint, a1, this.config.legStrength);
+        this.drive(limb.lowerJoint, a2 - a1, this.config.legStrength);
+      } else {
+        // Hands aim relative to where the shoulder would be if the torso were upright (above the hip),
+        // so upper-body rocking is absorbed by the arms instead of yanking the tray around.
+        const t = this.targetFor(limb, cur, { x: hip.x, y: hip.y + ARM_ANCHOR_RISE });
+        const { a1, a2 } = solveIK(shoulder.x, shoulder.y, t.x, t.y, limb.L1, limb.L2, limb.bend);
+        this.drive(limb.upperJoint, a1 - torsoAngle, this.config.armStrength);
+        this.drive(limb.lowerJoint, a2 - limb.upper.getAngle(), this.config.armStrength);
+      }
     }
+  }
+
+  /** Gently steer the tray toward the tilt the arms are asking for. */
+  private steadyTray() {
+    const front = this.limp.has(FRONT_ARM) ? 0 : this.smoothed[FRONT_ARM].y;
+    const rear = this.limp.has(REAR_ARM) ? 0 : this.smoothed[REAR_ARM].y;
+    const desired = Math.atan2((front - rear) * this.config.armReach, FRONT_HAND.x - REAR_HAND.x);
+    const err = wrap(this.tray.getAngle() - desired);
+    const k = this.config.trayAssist;
+    this.tray.applyTorque(-(k * err + k * 0.12 * this.tray.getAngularVelocity()), true);
   }
 
   private drive(joint: RevoluteJoint, desired: number, strength: number) {
@@ -260,6 +311,9 @@ export class LimbleSim {
     this.feet = [];
     this.itemFixtures = [];
     this.items = [];
+    this.dropped = new Set();
+    this.itemIndex = new Map();
+    this.smoothed = emptyInputs();
 
     const world = new World({ gravity: { x: 0, y: -c.gravity }, allowSleep: false });
     this.world = world;
@@ -273,9 +327,9 @@ export class LimbleSim {
     const torso = world.createBody({
       type: "dynamic",
       position: { x: START_X, y: hipY - HIP_LOCAL.y },
-      angularDamping: 0.3,
+      angularDamping: c.torsoDamping,
     });
-    const bodyFix = { density: 60, friction: 0.6, filterGroupIndex: BODY_GROUP };
+    const bodyFix = { density: 60, friction: 0.6, filterGroupIndex: BODY_GROUP, filterCategoryBits: CAT_BODY };
     torso.createFixture(new BoxShape(TORSO_W / 2, TORSO_H / 2), { ...bodyFix, userData: "torso" satisfies Tag });
     torso.createFixture(new CircleShape({ x: 0, y: HEAD_Y }, HEAD_R), { ...bodyFix, density: 40, userData: "torso" satisfies Tag });
     this.torso = torso;
@@ -345,21 +399,38 @@ export class LimbleSim {
       y: (front.y + rear.y) / 2 + Math.cos(trayAngle) * (TRAY_H / 2 + 0.005),
     };
     const tray = world.createBody({ type: "dynamic", position: trayCenter, angle: trayAngle });
-    tray.createFixture(new BoxShape(TRAY_W / 2, TRAY_H / 2), {
-      density: 25, friction: 0.8, filterGroupIndex: BODY_GROUP, userData: "tray" satisfies Tag,
-    });
+    const trayFix = { density: 25, friction: 1, filterGroupIndex: BODY_GROUP, userData: "tray" satisfies Tag };
+    tray.createFixture(new BoxShape(TRAY_W / 2, TRAY_H / 2), trayFix);
+    // Raised rims at both ends stop items sliding straight off.
+    for (const side of [-1, 1]) {
+      tray.createFixture(new BoxShape(TRAY_RIM_W / 2, TRAY_RIM_H / 2, {
+        x: side * (TRAY_W / 2 - TRAY_RIM_W / 2),
+        y: TRAY_H / 2 + TRAY_RIM_H / 2,
+      }), trayFix);
+    }
     world.createJoint(new RevoluteJoint({}, this.limbs[FRONT_ARM].lower, tray, front));
     world.createJoint(new RevoluteJoint({}, this.limbs[id2(FRONT_ARM)].lower, tray, rear));
     this.tray = tray;
 
-    // Stack the items on the tray.
-    let y = trayCenter.y + TRAY_H / 2;
+    // Let the body settle into its stance before stacking, so the spawn doesn't launch the items.
+    for (let i = 0; i < 45; i++) {
+      this.driveLimbs();
+      this.selfRight();
+      this.steadyTray();
+      world.step(TICK, 8, 3);
+    }
+
+    // Stack the items on the tray, in the tray's own frame.
+    let y = TRAY_H / 2;
     for (const def of ITEMS) {
       y += def.h / 2 + 0.002;
-      const item = world.createBody({ type: "dynamic", position: { x: trayCenter.x, y } });
-      this.itemFixtures.push(item.createFixture(new BoxShape(def.w / 2, def.h / 2), {
+      const item = world.createBody({ type: "dynamic", position: tray.getWorldPoint({ x: 0, y }), angle: tray.getAngle() });
+      const fixture = item.createFixture(new BoxShape(def.w / 2, def.h / 2), {
         density: 15, friction: c.itemFriction, userData: "item" satisfies Tag,
-      }));
+        filterMaskBits: 0xffff & ~CAT_BODY, // items pass through the body; only tray, items and ground catch them
+      });
+      this.itemIndex.set(fixture, this.itemFixtures.length);
+      this.itemFixtures.push(fixture);
       this.items.push(item);
       y += def.h / 2;
     }
@@ -377,11 +448,15 @@ export class LimbleSim {
     ];
 
     world.on("begin-contact", (contact) => {
-      const a = contact.getFixtureA().getUserData() as Tag;
-      const b = contact.getFixtureB().getUserData() as Tag;
+      const fa = contact.getFixtureA();
+      const fb = contact.getFixtureB();
+      const a = fa.getUserData() as Tag;
+      const b = fb.getUserData() as Tag;
       if (a !== "ground" && b !== "ground") return;
+      const otherFixture = a === "ground" ? fb : fa;
       const other = a === "ground" ? b : a;
-      if (other === "item") this.pendingFail ??= "dropped";
+      // A dropped item is lost for this run; the run only ends when all are gone.
+      if (other === "item" && this.status === "playing") this.dropped.add(this.itemIndex.get(otherFixture)!);
       else if (other === "torso") this.pendingFail ??= "fell";
     });
 
