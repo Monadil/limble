@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#cfe8ff" />
+    <title>Limble</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="hud">
+      <div class="hud-left">
+        <div id="attempt">Attempt 1</div>
+        <div id="best">Best 0.0 m</div>
+      </div>
+      <div class="hud-center">
+        <div id="progress"><div id="progress-fill"></div><div id="progress-best"></div></div>
+      </div>
+      <div class="hud-right"><div id="time">0.0s</div></div>
+    </div>
+    <div id="banner"></div>
+    <div id="hints">
+      <div class="hint left"><b>LEGS</b>Drag left / right to step<br />up to lift the foot</div>
+      <div class="hint right"><b>ARMS</b>Up / down to raise the tray<br />left / right to tilt</div>
+    </div>
+    <div id="rotate">
+      <div>
+        <div class="rotate-icon">📱↻</div>
+        Turn your phone sideways
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

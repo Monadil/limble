@@ -1,0 +1,17 @@
+{
+  "name": "limble",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "typecheck": "tsc -p shared && tsc -p client"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
