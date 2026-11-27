@@ -1,5 +1,5 @@
 import {
-  FINISH_X, ITEMS, LIMBS, LimbleSim, PairLegsGait, START_X, TICK, armsFromPairStick,
+  FINISH_X, ITEMS, LimbleSim, PairLegsGait, START_X, TICK, armsFromPairStick,
 } from "@limble/shared";
 import { loadSavedConfig, mountDebugPanel } from "./debug";
 import { Joysticks } from "./joysticks";
@@ -74,8 +74,8 @@ function frame(now: number) {
   last = now;
   acc += dt;
 
-  // Solo: left thumb = both legs (swipe to step), right thumb = both arms.
-  const legStick = sticks.read("left");
+  // Solo: left thumb = both legs (drag to place a foot), right thumb = both arms.
+  const legStick = sticks.isActive("left") ? sticks.read("left") : null;
   const armStick = sticks.read("right");
 
   let steps = 0;
@@ -84,7 +84,7 @@ function frame(now: number) {
       gait.reset();
       gaitAttempt = sim.attempt;
     }
-    sim.setInputs({ ...gait.update(legStick, TICK), ...armsFromPairStick(armStick) });
+    sim.setInputs({ ...gait.update(legStick), ...armsFromPairStick(armStick) });
     sim.step();
     acc -= TICK;
     steps++;
@@ -92,7 +92,8 @@ function frame(now: number) {
   if (steps === 6) acc = 0;
 
   const snap = updateHud();
-  renderer.draw(snap, dt, sticks, LIMBS);
+  // Outline the foot that will move on the next drag.
+  renderer.draw(snap, dt, sticks, [gait.nextLeg]);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

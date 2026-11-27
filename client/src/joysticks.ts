@@ -37,6 +37,13 @@ export class Joysticks {
     return Math.max(40, Math.min(75, window.innerHeight * 0.17));
   }
 
+  /** True while a thumb is on this zone (or one of its keys is held). */
+  isActive(zone: Zone): boolean {
+    if (this.active[zone]) return true;
+    const keys = zone === "left" ? ["a", "d", "w", "s"] : ["arrowleft", "arrowright", "arrowup", "arrowdown"];
+    return keys.some((k) => this.keys.has(k));
+  }
+
   read(zone: Zone): Stick {
     const a = this.active[zone];
     if (a) {

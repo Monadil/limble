@@ -21,85 +21,75 @@ export function emptyInputs(): LimbInputs {
 
 const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
 
-type LegId = "leftLeg" | "rightLeg";
+export type LegId = "leftLeg" | "rightLeg";
+const otherLeg = (leg: LegId): LegId => (leg === "leftLeg" ? "rightLeg" : "leftLeg");
 
-/** Tunables for the swipe-to-step gait (stick units: 1 = full leg reach). */
-export const GAIT = {
-  stepTime: 0.42, // seconds for one step
-  forward: 0.55, // where the stepping foot lands
-  back: -0.4, // where the planted foot pushes back to
-  lift: 0.65, // step height (fraction of leg lift); dragging up adds more
-  trigger: 0.45, // stick |x| that starts a step
-  rearm: 0.25, // stick must come back inside this before the same side can trigger again
-  settleAfter: 0.8, // seconds idle before feet drift back under the body
+/** Tunables for drag-to-place stepping (stick units: 1 = full leg reach). */
+export const STEP = {
+  start: 0.15, // how far the thumb must move before a step begins
+  range: 1.2, // full drag moves the foot this far (relative to the hip)
+  push: 1.0, // how much the planted foot pushes back as the other swings forward
+  minLift: 0.3, // automatic foot clearance while swinging; drag up for more
 };
 
 /**
- * One stick driving both legs, swipe-to-step.
- * Drag right: the left leg takes a step (lift, swing forward, plant) while the right foot pushes back.
- * Drag left: the right leg steps. Alternate left/right to walk. Drag further up for higher steps.
- * Dragging down presses both feet into the ground (stands taller).
- * The joints are still physics-driven, so bad timing still trips you up.
+ * One stick driving both legs: drag to place a foot.
+ *
+ * - Drag forward (right): the free foot swings forward to follow your thumb, while the planted
+ *   foot pushes the body forward. Drag further for a longer stride, up for a higher step.
+ * - Let go: the foot plants where it is, and the other foot becomes the free one.
+ *   So the feet take turns: drag, let go, drag, let go… to walk.
+ * - Drag backward (left) to step back.
+ *
+ * Feet stay where you put them, so overstriding (splits) or tiny shuffles have consequences.
+ * The joints are physics-driven, so it's still wobbly.
  */
 export class PairLegsGait {
-  private foot: Record<LegId, number> = { leftLeg: 0, rightLeg: 0 };
-  private step: { leg: LegId; t: number; from: number; standFrom: number } | null = null;
-  private armed = { right: true, left: true };
-  private idle = 0;
-  /** Number of steps taken (for UI/debug). */
+  /** The foot that moves on the next drag. */
+  nextLeg: LegId = "leftLeg";
+  /** Number of steps planted (for UI/debug). */
   steps = 0;
 
+  private foot: Record<LegId, number> = { leftLeg: 0, rightLeg: 0 };
+  private swing: { leg: LegId; from: number; standFrom: number } | null = null;
+
   reset() {
+    this.nextLeg = "leftLeg";
+    this.steps = 0;
     this.foot = { leftLeg: 0, rightLeg: 0 };
-    this.step = null;
-    this.armed = { right: true, left: true };
-    this.idle = 0;
+    this.swing = null;
   }
 
-  update(s: Stick, dt: number): Pick<LimbInputs, LegId> {
-    if (s.x < GAIT.rearm) this.armed.right = true;
-    if (s.x > -GAIT.rearm) this.armed.left = true;
+  /** `s` is the stick, or null when no thumb is on the legs zone. */
+  update(s: Stick | null): Pick<LimbInputs, LegId> {
+    const active = s !== null && Math.hypot(s.x, s.y) > STEP.start;
 
-    const canStart = !this.step || this.step.t > 0.65;
-    let start: LegId | null = null;
-    if (canStart && s.x >= GAIT.trigger && this.armed.right) start = "leftLeg";
-    if (canStart && s.x <= -GAIT.trigger && this.armed.left) start = "rightLeg";
-    if (start) {
-      if (start === "leftLeg") this.armed.right = false;
-      else this.armed.left = false;
-      const other: LegId = start === "leftLeg" ? "rightLeg" : "leftLeg";
-      this.step = { leg: start, t: 0, from: this.foot[start], standFrom: this.foot[other] };
+    if (active && !this.swing) {
+      const leg = this.nextLeg;
+      this.swing = { leg, from: this.foot[leg], standFrom: this.foot[otherLeg(leg)] };
+    }
+
+    if (this.swing && !active) {
+      // Thumb lifted (or back to centre): plant the foot and hand over to the other one.
+      this.nextLeg = otherLeg(this.swing.leg);
+      this.swing = null;
       this.steps++;
     }
 
-    const press = Math.min(0, s.y);
+    const press = s ? Math.min(0, s.y) : 0;
     const out: Pick<LimbInputs, LegId> = {
       leftLeg: { x: this.foot.leftLeg, y: press },
       rightLeg: { x: this.foot.rightLeg, y: press },
     };
 
-    if (this.step) {
-      this.idle = 0;
-      const st = this.step;
-      st.t = Math.min(1, st.t + dt / GAIT.stepTime);
-      const e = st.t * st.t * (3 - 2 * st.t); // ease in-out
-      const stand: LegId = st.leg === "leftLeg" ? "rightLeg" : "leftLeg";
-      this.foot[st.leg] = st.from + (GAIT.forward - st.from) * e;
-      this.foot[stand] = st.standFrom + (Math.min(st.standFrom, GAIT.back) - st.standFrom) * e;
-      const lift = Math.min(1, GAIT.lift + Math.max(0, s.y) * 0.5) * Math.sin(Math.PI * st.t);
-      out[st.leg] = { x: this.foot[st.leg], y: lift };
-      out[stand] = { x: this.foot[stand], y: press };
-      if (st.t >= 1) this.step = null;
-    } else {
-      this.idle += dt;
-      if (this.idle > GAIT.settleAfter && Math.abs(s.x) < GAIT.rearm) {
-        // Slowly bring the feet back under the body.
-        for (const leg of ["leftLeg", "rightLeg"] as LegId[]) {
-          const f = this.foot[leg];
-          this.foot[leg] = f - Math.sign(f) * Math.min(Math.abs(f), dt * 0.8);
-          out[leg].x = this.foot[leg];
-        }
-      }
+    if (this.swing && s) {
+      const { leg, from, standFrom } = this.swing;
+      const stand = otherLeg(leg);
+      const x = clamp1(from + s.x * STEP.range);
+      this.foot[leg] = x;
+      this.foot[stand] = clamp1(standFrom - (x - from) * STEP.push);
+      out[leg] = { x, y: Math.max(STEP.minLift, s.y) };
+      out[stand] = { x: this.foot[stand], y: 0 };
     }
     return out;
   }

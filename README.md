@@ -13,13 +13,20 @@ npm run dev
 Vite prints a **Network** address (e.g. `http://192.168.x.x:5173`). Open it on a phone on the
 same Wi-Fi and turn the phone sideways.
 
-- Left thumb (anywhere on the left half): legs. Each swipe right/left takes a step with the
-  left/right leg; alternate to walk. Swipe up-and-across for a higher step.
+- Left thumb (anywhere on the left half): legs. Drag forward to swing the outlined foot, let go
+  to plant it. The feet take turns. Drag further for longer strides, up for higher steps.
 - Right thumb (right half): arms. Up/down raises the tray, left/right tilts it.
-- Desktop: `W A S D` for legs, arrow keys for arms.
+- Desktop: hold and release `D` to step (add `W` to lift higher), arrow keys for arms.
 - Add `?debug=1` to the URL for the tuning panel (⚙). "Copy values" copies your settings.
 
 ## Headless sim
 
-`npx tsx scripts/headless.ts '{"balanceAssist":800}' 0.5` runs the physics without a browser with a
-scripted player swiping left/right, and prints how far it got. Useful for quick tuning sweeps.
+`npx tsx scripts/headless.ts '{}' 0.7 0.4 0.15` runs the physics without a browser with a
+scripted player (stride, drag time, rest time) and prints how far it got. Useful for tuning sweeps.
+
+## Share it (GitHub Pages)
+
+Every push to `main` builds the game and publishes it with `.github/workflows/pages.yml`.
+One-time setup: on GitHub, open the repo → **Settings → Pages** → set **Source** to
+**GitHub Actions**. The game is then at `https://<user>.github.io/limble/` (add `?debug=1` for
+the tuning panel). Pages on a free account needs the repo to be public.
